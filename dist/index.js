@@ -1,35 +1,77 @@
+class MediaWidget extends HTMLElement {
+    constructor() {
+        super();
+    }
 
-const widget = document.getElementById('widget');
-const title = document.getElementById('title');
-const time = document.getElementById('time');
+    connectedCallback() {
+        this.child_img = document.createElement("img");
+        this.appendChild(this.child_img);
 
-let update_timer = null;
+        this.child_title = document.createElement("span");
+        this.appendChild(this.child_title);
 
-async function set_metadata(req) {
-    const res = await req;
-    const data = await res.json();
-    console.log(data);
+        this.child_progress = document.createElement("progress");
+        this.appendChild(this.child_progress);
 
-    title.textContent = data.title;
-    time.value = data.position / 1000000;
-    time.max = data.length / 1000000;
+        this.eventSource = this.get_updates();
 
-    if (data.running) {
-        if (update_timer === null) {
-            update_timer = setInterval(() => {
-                time.value += 1;
-            }, 1000);
-        }
-    } else {
-        if (update_timer !== null) {
-            clearInterval(update_timer);
-            update_timer = null;
-        }
+        this.addEventListener("click", () => {
+            fetch(`/playpause/${this.getAttribute("media-id")}`, { method: "POST" });
+        });
+
+        this.update_timer = null;
+        this.playback_rate = 1;
+        this.art_url_hash = null;
+    }
+
+    disconnectedCallback() {
+        this.eventSource.close();
+        clearInterval(this.update_timer);
+    }
+
+    get_updates() {
+        const eventSource = new EventSource(`/metadata/${this.getAttribute("media-id")}`);
+        eventSource.addEventListener("update", event => {
+            const data = JSON.parse(event.data);
+
+            if (data.art_url_hash !== this.art_url_hash) {
+                this.child_img.src = `/icon/${this.getAttribute("media-id")}/${data.art_url_hash}`;
+                this.art_url_hash = data.art_url_hash;
+            }
+
+            this.child_title.textContent = data.title;
+
+            this.child_progress.value = data.position;
+            this.child_progress.max = data.length;
+
+            this.playback_rate = data.playback_rate;
+
+            if (data.running && this.update_timer === null) {
+                this.update_timer = setInterval(() => {
+                    this.child_progress.value += this.playback_rate;
+                }, 1000);
+            }
+            if (!data.running && this.update_timer !== null) {
+                clearInterval(this.update_timer);
+                this.update_timer = null;
+            }
+        });
+        eventSource.addEventListener("end", () => {
+            this.parentNode.removeChild(this);
+        });
+        return eventSource;
     }
 }
 
-widget.addEventListener('click', () => {
-    set_metadata(fetch('/api/playpause'));
-});
+customElements.define("media-widget", MediaWidget);
 
-set_metadata(fetch('/api/metadata'));
+fetch("/list")
+    .then(res => res.json())
+    .then(data => {
+        const list = document.getElementById("list");
+        for (let media of data) {
+            const media_widget = document.createElement("media-widget");
+            media_widget.setAttribute("media-id", media);
+            list.appendChild(media_widget);
+        }
+    });

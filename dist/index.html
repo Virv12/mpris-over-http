@@ -5,18 +5,19 @@
         <style>
         :root { color-scheme: light dark; }
 
-        #widget {
+        media-widget {
             width: 100%;
             position: relative;
+            display: block;
         }
 
-        img {
+        media-widget img {
             width: 100%;
             border-radius: 10px;
             filter: brightness(0.8) blur(5px);
         }
 
-        #title {
+        media-widget span {
             position: absolute;
             top: 7%;
             left: 50%;
@@ -24,7 +25,7 @@
             font-size: 1.5em;
         }
 
-        #time {
+        media-widget progress {
             position: absolute;
             bottom: 7%;
             left: 50%;
@@ -36,11 +37,8 @@
         <script type="module" src="index.js" defer></script>
     </head>
     <body>
-        <div id="widget">
-            <img src="/api/icon">
-            <span id="title"></span>
-            <progress id="time" value="0" max="100"></progress>
-        </div>
+        <!-- <audio controls id="fakeAudio" src="/test-audio.mp3"></audio> -->
+        <div id="list"></div>
     </body>
 </html>
 
