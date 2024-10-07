@@ -13,6 +13,22 @@ class MediaWidget extends HTMLElement {
         this.child_progress = document.createElement("progress");
         this.appendChild(this.child_progress);
 
+        this.child_seek_backward = document.createElement("button");
+        this.child_seek_backward.textContent = "Seek Backward";
+        this.child_seek_backward.addEventListener("click", event => {
+            fetch(`/seek/${this.getAttribute("media-id")}/-10000000`, { method: "POST" });
+            event.stopPropagation();
+        });
+        this.appendChild(this.child_seek_backward);
+
+        this.child_seek_forward = document.createElement("button");
+        this.child_seek_forward.textContent = "Seek Forward";
+        this.child_seek_forward.addEventListener("click", event => {
+            fetch(`/seek/${this.getAttribute("media-id")}/+10000000`, { method: "POST" });
+            event.stopPropagation();
+        });
+        this.appendChild(this.child_seek_forward);
+
         this.eventSource = this.get_updates();
 
         this.addEventListener("click", () => {
