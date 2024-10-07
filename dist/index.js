@@ -10,7 +10,7 @@ class MediaWidget extends HTMLElement {
 
         this.child_title = document.createElement("span");
         this.appendChild(this.child_title);
-        
+
         this.child_prev = document.createElement("button");
         this.child_prev.textContent = "Prev";
         this.child_prev.addEventListener("click", event => {
@@ -42,6 +42,9 @@ class MediaWidget extends HTMLElement {
             event.stopPropagation();
         });
         this.appendChild(this.child_next);
+
+        this.child_volume = document.createElement("p");
+        this.appendChild(this.child_volume);
 
         this.update_progress = null;
         this.progress_base = 0;
@@ -96,6 +99,12 @@ class MediaWidget extends HTMLElement {
                 this.child_next.classList.add("hidden");
             }
 
+            if (data.has_volume) {
+                this.child_volume.textContent = `Volume: ${data.volume * 100}%`;
+            } else {
+                this.child_volume.textContent = "";
+            }
+
             if (data.running && this.update_progress === null) {
                 this.playback_rate = data.playback_rate ?? 1;
                 this.progress_base = performance.now() / 1000 - data.position / (1000000 * this.playback_rate);
@@ -126,9 +135,12 @@ fetch("/list")
     .then(res => res.json())
     .then(data => {
         const list = document.getElementById("list");
+        let export_widget = true;
         for (let media of data) {
             const media_widget = document.createElement("media-widget");
             media_widget.setAttribute("media-id", media);
+            media_widget.setAttribute("export-widget", export_widget);
             list.appendChild(media_widget);
+            export_widget = false;
         }
     });
