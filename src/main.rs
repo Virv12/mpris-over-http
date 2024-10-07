@@ -1,9 +1,9 @@
 use std::{
     convert::Infallible,
-    hash::{Hash, Hasher},
+    hash::{Hash, Hasher}, net::SocketAddr,
 };
 
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use axum::{
     body::Body,
     extract::Path,
@@ -12,6 +12,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use clap::Parser;
 use futures::StreamExt;
 use http::status::StatusCode;
 use mpris::{DBusError, Player, PlayerFinder};
@@ -35,8 +36,16 @@ fn find_player_by_id(id: &str) -> Result<Option<Player>, DBusError> {
         .transpose()?)
 }
 
+#[derive(clap::Parser)]
+struct Args {
+    #[clap(long, default_value = "127.0.0.1:80")]
+    listen_on: SocketAddr,
+}
+
 #[tokio::main]
 async fn main() {
+    let args = Args::parse();
+
     let app = Router::new()
         .nest_service(
             "/",
@@ -46,11 +55,11 @@ async fn main() {
         .route("/metadata/:id", get(metadata))
         .route("/icon/:id/:hash", get(icon))
         .route("/playpause/:id", post(playpause))
-        .route("/seek/:id/:dtime", post(seek));
+        .route("/seek/:id/:dtime", post(seek))
+        .route("/next/:id", post(next))
+        .route("/prev/:id", post(prev));
 
-    let listener = tokio::net::TcpListener::bind("192.168.2.2:3000")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind(args.listen_on).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -66,7 +75,7 @@ async fn list() -> AppResult<impl IntoResponse> {
 
 #[axum::debug_handler]
 async fn metadata(Path(id): Path<String>) -> Response<Body> {
-    #[derive(Serialize)]
+    #[derive(Debug, Clone, Serialize)]
     struct Info {
         position: u64,
         length: Option<u64>,
@@ -77,13 +86,14 @@ async fn metadata(Path(id): Path<String>) -> Response<Body> {
 
         can_control: bool,
         can_go_next: bool,
-        can_go_previous: bool,
+        can_go_prev: bool,
         can_seek: bool,
-        //has_volume: bool,
-        //volume: f64,
+
+        has_volume: bool,
+        volume: Option<f64>,
     }
 
-    let (tx, rx) = tokio::sync::mpsc::channel(16);
+    let (tx, rx) = tokio::sync::watch::channel(None);
 
     std::thread::spawn(move || {
         let player = find_player_by_id(&id).unwrap().unwrap();
@@ -103,17 +113,21 @@ async fn metadata(Path(id): Path<String>) -> Response<Body> {
 
                 can_control: player.can_control().unwrap(),
                 can_go_next: player.can_go_next().unwrap(),
-                can_go_previous: player.can_go_previous().unwrap(),
+                can_go_prev: player.can_go_previous().unwrap(),
                 can_seek: player.can_seek().unwrap(),
+
+                has_volume: player.has_volume().unwrap(),
+                volume: player.get_volume().ok(),
             };
-            let res = tx.blocking_send(info);
+            let res = tx.send(Some(info));
             if res.is_err() {
                 break;
             }
         }
     });
 
-    let stream = tokio_stream::wrappers::ReceiverStream::new(rx)
+    let stream = tokio_stream::wrappers::WatchStream::from_changes(rx)
+        .filter_map(|info| async { info })
         .map(move |info| {
             let mut json = b"event: update\ndata: ".to_vec();
             serde_json::to_writer(&mut json, &info).unwrap();
@@ -145,12 +159,27 @@ async fn icon(Path((id, _hash)): Path<(String, u64)>) -> AppResult<Response<Body
 
     if let Some(path) = art_url.strip_prefix("file://") {
         let file = File::open(path).await?;
-        return Ok(Body::from_stream(tokio_util::io::ReaderStream::new(file)).into_response());
+        let content_length = file.metadata().await?.len();
+        let body = Body::from_stream(tokio_util::io::ReaderStream::new(file));
+        let mut res = Response::new(body);
+        res.headers_mut()
+            .insert("Content-Length", content_length.into());
+        return Ok(res);
     }
 
     if art_url.starts_with("http") {
         let response = reqwest::get(art_url).await?;
-        return Ok(Body::from_stream(response.bytes_stream()).into_response());
+        let content_length = response.headers().get("Content-Length").cloned();
+        let content_type = response.headers().get("Content-Type").cloned();
+        let body = Body::from_stream(response.bytes_stream());
+        let mut res = Response::new(body);
+        if let Some(content_length) = content_length {
+            res.headers_mut().insert("Content-Length", content_length);
+        }
+        if let Some(content_type) = content_type {
+            res.headers_mut().insert("Content-Type", content_type);
+        }
+        return Ok(res);
     }
 
     Err(anyhow!("Unsupported art URL: {}", art_url))?
@@ -162,7 +191,7 @@ async fn playpause(Path(id): Path<String>) -> AppResult<impl IntoResponse> {
         return Ok((StatusCode::NOT_FOUND, "Player not found\n"));
     };
     player.play_pause()?;
-    Ok((StatusCode::OK, "Play/pause successfull\n"))
+    Ok((StatusCode::OK, "Operation successfull\n"))
 }
 
 #[axum::debug_handler]
@@ -171,5 +200,23 @@ async fn seek(Path((id, dtime)): Path<(String, i64)>) -> AppResult<impl IntoResp
         return Ok((StatusCode::NOT_FOUND, "Player not found\n"));
     };
     player.seek(dtime)?;
-    Ok((StatusCode::OK, "Seek successfull\n"))
+    Ok((StatusCode::OK, "Operation successfull\n"))
+}
+
+#[axum::debug_handler]
+async fn next(Path(id): Path<String>) -> AppResult<impl IntoResponse> {
+    let Some(player) = find_player_by_id(&id)? else {
+        return Ok((StatusCode::NOT_FOUND, "Player not found\n"));
+    };
+    player.next()?;
+    Ok((StatusCode::OK, "Operation successfull\n"))
+}
+
+#[axum::debug_handler]
+async fn prev(Path(id): Path<String>) -> AppResult<impl IntoResponse> {
+    let Some(player) = find_player_by_id(&id)? else {
+        return Ok((StatusCode::NOT_FOUND, "Player not found\n"));
+    };
+    player.previous()?;
+    Ok((StatusCode::OK, "Operation successfull\n"))
 }

@@ -4,14 +4,20 @@ class MediaWidget extends HTMLElement {
     }
 
     connectedCallback() {
+        this.art_url_hash = null;
         this.child_img = document.createElement("img");
         this.appendChild(this.child_img);
 
         this.child_title = document.createElement("span");
         this.appendChild(this.child_title);
-
-        this.child_progress = document.createElement("progress");
-        this.appendChild(this.child_progress);
+        
+        this.child_prev = document.createElement("button");
+        this.child_prev.textContent = "Prev";
+        this.child_prev.addEventListener("click", event => {
+            fetch(`/prev/${this.getAttribute("media-id")}`, { method: "POST" });
+            event.stopPropagation();
+        });
+        this.appendChild(this.child_prev);
 
         this.child_seek_backward = document.createElement("button");
         this.child_seek_backward.textContent = "Seek Backward";
@@ -29,20 +35,30 @@ class MediaWidget extends HTMLElement {
         });
         this.appendChild(this.child_seek_forward);
 
+        this.child_next = document.createElement("button");
+        this.child_next.textContent = "Next";
+        this.child_next.addEventListener("click", event => {
+            fetch(`/next/${this.getAttribute("media-id")}`, { method: "POST" });
+            event.stopPropagation();
+        });
+        this.appendChild(this.child_next);
+
+        this.update_progress = null;
+        this.progress_base = 0;
+        this.playback_rate = 1;
+        this.child_progress = document.createElement("progress");
+        this.appendChild(this.child_progress);
+
         this.eventSource = this.get_updates();
 
         this.addEventListener("click", () => {
             fetch(`/playpause/${this.getAttribute("media-id")}`, { method: "POST" });
         });
-
-        this.update_timer = null;
-        this.playback_rate = 1;
-        this.art_url_hash = null;
     }
 
     disconnectedCallback() {
         this.eventSource.close();
-        clearInterval(this.update_timer);
+        cancelAnimationFrame(this.update_progress);
     }
 
     get_updates() {
@@ -60,22 +76,47 @@ class MediaWidget extends HTMLElement {
             this.child_progress.value = data.position;
             this.child_progress.max = data.length;
 
-            this.playback_rate = data.playback_rate;
-
-            if (data.running && this.update_timer === null) {
-                this.update_timer = setInterval(() => {
-                    this.child_progress.value += this.playback_rate;
-                }, 1000);
+            if (data.can_go_prev) {
+                this.child_prev.classList.remove("hidden");
+            } else {
+                this.child_prev.classList.add("hidden");
             }
-            if (!data.running && this.update_timer !== null) {
-                clearInterval(this.update_timer);
-                this.update_timer = null;
+
+            if (data.can_seek) {
+                this.child_seek_backward.classList.remove("hidden");
+                this.child_seek_forward.classList.remove("hidden");
+            } else {
+                this.child_seek_backward.classList.add("hidden");
+                this.child_seek_forward.classList.add("hidden");
+            }
+
+            if (data.can_go_next) {
+                this.child_next.classList.remove("hidden");
+            } else {
+                this.child_next.classList.add("hidden");
+            }
+
+            if (data.running && this.update_progress === null) {
+                this.playback_rate = data.playback_rate ?? 1;
+                this.progress_base = performance.now() / 1000 - data.position / (1000000 * this.playback_rate);
+                this.launchUpdateTimer();
+            }
+            if (!data.running && this.update_progress !== null) {
+                cancelAnimationFrame(this.update_progress);
+                this.update_progress = null;
             }
         });
         eventSource.addEventListener("end", () => {
             this.parentNode.removeChild(this);
         });
         return eventSource;
+    }
+
+    launchUpdateTimer() {
+        this.update_progress = requestAnimationFrame(() => {
+            this.child_progress.value = (performance.now() / 1000 - this.progress_base) * 1000000 * this.playback_rate;
+            this.launchUpdateTimer();
+        });
     }
 }
 
