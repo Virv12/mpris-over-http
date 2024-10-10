@@ -1,6 +1,7 @@
 use std::{
     convert::Infallible,
-    hash::{Hash, Hasher}, net::SocketAddr,
+    hash::{Hash, Hasher},
+    net::SocketAddr,
 };
 
 use anyhow::anyhow;
@@ -137,11 +138,10 @@ async fn metadata(Path(id): Path<String>) -> Response<Body> {
         .chain(futures::stream::iter([Ok(
             b"event: end\ndata: \n\n".to_vec()
         )]));
-    let body = Body::from_stream(stream);
-    let mut res = Response::new(body);
-    res.headers_mut()
-        .insert("Content-Type", "text/event-stream".parse().unwrap());
-    res
+    Response::builder()
+        .header("Content-Type", "text/event-stream")
+        .body(Body::from_stream(stream))
+        .unwrap()
 }
 
 #[axum::debug_handler]
@@ -161,10 +161,10 @@ async fn icon(Path((id, _hash)): Path<(String, u64)>) -> AppResult<Response<Body
         let file = File::open(path).await?;
         let content_length = file.metadata().await?.len();
         let body = Body::from_stream(tokio_util::io::ReaderStream::new(file));
-        let mut res = Response::new(body);
-        res.headers_mut()
-            .insert("Content-Length", content_length.into());
-        return Ok(res);
+        return Ok(Response::builder()
+            .header("Content-Length", content_length)
+            .body(body)
+            .unwrap());
     }
 
     if art_url.starts_with("http") {
