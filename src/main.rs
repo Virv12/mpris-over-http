@@ -4,7 +4,7 @@ use std::{
     net::SocketAddr,
 };
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use axum::{
     body::Body,
     extract::Path,
@@ -18,7 +18,7 @@ use futures::StreamExt;
 use http::status::StatusCode;
 use mpris::{DBusError, Player, PlayerFinder};
 use serde::Serialize;
-use tokio::fs::File;
+use tokio::{fs::File, sync::watch};
 use tower_http::services::ServeDir;
 
 mod error;
@@ -37,14 +37,16 @@ fn find_player_by_id(id: &str) -> Result<Option<Player>, DBusError> {
         .transpose()?)
 }
 
-#[derive(clap::Parser)]
-struct Args {
-    #[clap(long, default_value = "127.0.0.1:80")]
-    listen_on: SocketAddr,
-}
-
 #[tokio::main]
 async fn main() {
+    #[derive(clap::Parser)]
+    struct Args {
+        #[clap(long, default_value = "127.0.0.1:8000")]
+        listen_on: SocketAddr,
+    }
+
+    env_logger::init();
+
     let args = Args::parse();
 
     let app = Router::new()
@@ -94,36 +96,44 @@ async fn metadata(Path(id): Path<String>) -> Response<Body> {
         volume: Option<f64>,
     }
 
-    let (tx, rx) = tokio::sync::watch::channel(None);
-
-    std::thread::spawn(move || {
-        let player = find_player_by_id(&id).unwrap().unwrap();
-        for () in [()].into_iter().chain(player.events().unwrap().map(|_| ())) {
-            let metadata = player.get_metadata().unwrap();
+    fn update_watch(id: &str, tx: watch::Sender<Option<Info>>) -> anyhow::Result<()> {
+        let player = find_player_by_id(&id)?.context("Player not found")?;
+        for () in [()].into_iter().chain(player.events()?.map(|_| ())) {
+            let metadata = player.get_metadata()?;
             let art_url = metadata.art_url();
             let mut hasher = std::hash::DefaultHasher::new();
             art_url.hash(&mut hasher);
             let art_url_hash = hasher.finish();
             let info = Info {
-                position: player.get_position_in_microseconds().unwrap(),
+                position: player.get_position_in_microseconds()?,
                 length: metadata.length_in_microseconds(),
                 title: metadata.title().map(ToOwned::to_owned),
-                running: player.get_playback_status().unwrap() == mpris::PlaybackStatus::Playing,
+                running: player.get_playback_status()? == mpris::PlaybackStatus::Playing,
                 playback_rate: player.get_playback_rate().ok(),
                 art_url_hash,
 
-                can_control: player.can_control().unwrap(),
-                can_go_next: player.can_go_next().unwrap(),
-                can_go_prev: player.can_go_previous().unwrap(),
-                can_seek: player.can_seek().unwrap(),
+                can_control: player.can_control()?,
+                can_go_next: player.can_go_next()?,
+                can_go_prev: player.can_go_previous()?,
+                can_seek: player.can_seek()?,
 
-                has_volume: player.has_volume().unwrap(),
+                has_volume: player.has_volume()?,
                 volume: player.get_volume().ok(),
             };
             let res = tx.send(Some(info));
             if res.is_err() {
                 break;
             }
+        }
+        Ok(())
+    }
+
+    let (tx, rx) = watch::channel(None);
+
+    std::thread::spawn(move || {
+        let res = update_watch(&id, tx);
+        if let Err(err) = res {
+            log::error!("{:?}", err);
         }
     });
 
@@ -140,6 +150,8 @@ async fn metadata(Path(id): Path<String>) -> Response<Body> {
         )]));
     Response::builder()
         .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("X-Accel-Buffering", "no")
         .body(Body::from_stream(stream))
         .unwrap()
 }
