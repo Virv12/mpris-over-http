@@ -66,6 +66,7 @@ class MediaWidget extends HTMLElement {
 
     get_updates() {
         const eventSource = new EventSource(`/metadata/${this.getAttribute("media-id")}`);
+
         eventSource.addEventListener("update", event => {
             const data = JSON.parse(event.data);
 
@@ -115,9 +116,11 @@ class MediaWidget extends HTMLElement {
                 this.update_progress = null;
             }
         });
+
         eventSource.addEventListener("end", () => {
             this.parentNode.removeChild(this);
         });
+
         return eventSource;
     }
 

@@ -2,6 +2,7 @@ use std::{
     convert::Infallible,
     hash::{Hash, Hasher},
     net::SocketAddr,
+    time::Duration,
 };
 
 use anyhow::{anyhow, Context};
@@ -13,12 +14,14 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use bytes::Bytes;
 use clap::Parser;
 use futures::StreamExt;
 use http::status::StatusCode;
 use mpris::{DBusError, Player, PlayerFinder};
 use serde::Serialize;
 use tokio::{fs::File, sync::watch};
+use tokio_stream::wrappers::{IntervalStream, WatchStream};
 use tower_http::services::ServeDir;
 
 mod error;
@@ -137,17 +140,24 @@ async fn metadata(Path(id): Path<String>) -> Response<Body> {
         }
     });
 
-    let stream = tokio_stream::wrappers::WatchStream::from_changes(rx)
+    let event_stream = WatchStream::from_changes(rx)
         .filter_map(|info| async { info })
         .map(move |info| {
             let mut json = b"event: update\ndata: ".to_vec();
             serde_json::to_writer(&mut json, &info).unwrap();
             json.extend_from_slice(b"\n\n");
-            Ok::<_, Infallible>(json)
-        })
-        .chain(futures::stream::iter([Ok(
-            b"event: end\ndata: \n\n".to_vec()
-        )]));
+            json.into()
+        });
+
+    let ping_stream = IntervalStream::new(tokio::time::interval(Duration::from_secs(30)))
+        .map(|_| Bytes::from_static(b"event: ping\ndata: \n\n"));
+
+    let stream = futures::stream::select(event_stream, ping_stream)
+        .chain(futures::stream::iter([Bytes::from_static(
+            b"event: end\ndata: \n\n",
+        )]))
+        .map(|x| Ok::<_, Infallible>(x));
+
     Response::builder()
         .header("Content-Type", "text/event-stream")
         .header("Cache-Control", "no-cache")
@@ -202,7 +212,10 @@ async fn playpause(Path(id): Path<String>) -> AppResult<impl IntoResponse> {
     let Some(player) = find_player_by_id(&id)? else {
         return Ok((StatusCode::NOT_FOUND, "Player not found\n"));
     };
-    player.play_pause()?;
+    let res = player.checked_play_pause()?;
+    if !res {
+        return Ok((StatusCode::BAD_REQUEST, "Cannot play/pause\n"));
+    }
     Ok((StatusCode::OK, "Operation successfull\n"))
 }
 
@@ -211,7 +224,10 @@ async fn seek(Path((id, dtime)): Path<(String, i64)>) -> AppResult<impl IntoResp
     let Some(player) = find_player_by_id(&id)? else {
         return Ok((StatusCode::NOT_FOUND, "Player not found\n"));
     };
-    player.seek(dtime)?;
+    let res = player.checked_seek(dtime)?;
+    if !res {
+        return Ok((StatusCode::BAD_REQUEST, "Cannot seek\n"));
+    }
     Ok((StatusCode::OK, "Operation successfull\n"))
 }
 
@@ -220,7 +236,10 @@ async fn next(Path(id): Path<String>) -> AppResult<impl IntoResponse> {
     let Some(player) = find_player_by_id(&id)? else {
         return Ok((StatusCode::NOT_FOUND, "Player not found\n"));
     };
-    player.next()?;
+    let res = player.checked_next()?;
+    if !res {
+        return Ok((StatusCode::BAD_REQUEST, "Cannot go to next track\n"));
+    }
     Ok((StatusCode::OK, "Operation successfull\n"))
 }
 
@@ -229,6 +248,9 @@ async fn prev(Path(id): Path<String>) -> AppResult<impl IntoResponse> {
     let Some(player) = find_player_by_id(&id)? else {
         return Ok((StatusCode::NOT_FOUND, "Player not found\n"));
     };
-    player.previous()?;
+    let res = player.checked_previous()?;
+    if !res {
+        return Ok((StatusCode::BAD_REQUEST, "Cannot go to previous track\n"));
+    }
     Ok((StatusCode::OK, "Operation successfull\n"))
 }
