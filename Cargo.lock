@@ -897,6 +897,8 @@ dependencies = [
  "futures",
  "http",
  "log",
+ "mime",
+ "mime_guess",
  "mpris",
  "reqwest",
  "serde",

@@ -1,0 +1,35 @@
+:root {
+    color-scheme: light dark;
+}
+
+media-widget {
+    width: 100%;
+    position: relative;
+    display: block;
+}
+
+media-widget img {
+    width: 100%;
+    border-radius: 10px;
+    filter: brightness(0.8) blur(5px);
+}
+
+media-widget span {
+    position: absolute;
+    top: 7%;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 1.5em;
+}
+
+media-widget progress {
+    position: absolute;
+    bottom: 7%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 90%;
+}
+
+media-widget button.hidden {
+    display: none;
+}

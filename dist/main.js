@@ -14,7 +14,7 @@ class MediaWidget extends HTMLElement {
         this.child_prev = document.createElement("button");
         this.child_prev.textContent = "Prev";
         this.child_prev.addEventListener("click", event => {
-            fetch(`/prev/${this.getAttribute("media-id")}`, { method: "POST" });
+            fetch(`/api/prev/${this.getAttribute("media-id")}`, { method: "POST" });
             event.stopPropagation();
         });
         this.appendChild(this.child_prev);
@@ -22,7 +22,7 @@ class MediaWidget extends HTMLElement {
         this.child_seek_backward = document.createElement("button");
         this.child_seek_backward.textContent = "Seek Backward";
         this.child_seek_backward.addEventListener("click", event => {
-            fetch(`/seek/${this.getAttribute("media-id")}/-10000000`, { method: "POST" });
+            fetch(`/api/seek/${this.getAttribute("media-id")}/-10000000`, { method: "POST" });
             event.stopPropagation();
         });
         this.appendChild(this.child_seek_backward);
@@ -30,7 +30,7 @@ class MediaWidget extends HTMLElement {
         this.child_seek_forward = document.createElement("button");
         this.child_seek_forward.textContent = "Seek Forward";
         this.child_seek_forward.addEventListener("click", event => {
-            fetch(`/seek/${this.getAttribute("media-id")}/+10000000`, { method: "POST" });
+            fetch(`/api/seek/${this.getAttribute("media-id")}/+10000000`, { method: "POST" });
             event.stopPropagation();
         });
         this.appendChild(this.child_seek_forward);
@@ -38,7 +38,7 @@ class MediaWidget extends HTMLElement {
         this.child_next = document.createElement("button");
         this.child_next.textContent = "Next";
         this.child_next.addEventListener("click", event => {
-            fetch(`/next/${this.getAttribute("media-id")}`, { method: "POST" });
+            fetch(`/api/next/${this.getAttribute("media-id")}`, { method: "POST" });
             event.stopPropagation();
         });
         this.appendChild(this.child_next);
@@ -55,7 +55,7 @@ class MediaWidget extends HTMLElement {
         this.eventSource = this.get_updates();
 
         this.addEventListener("click", () => {
-            fetch(`/playpause/${this.getAttribute("media-id")}`, { method: "POST" });
+            fetch(`/api/playpause/${this.getAttribute("media-id")}`, { method: "POST" });
         });
     }
 
@@ -65,13 +65,13 @@ class MediaWidget extends HTMLElement {
     }
 
     get_updates() {
-        const eventSource = new EventSource(`/metadata/${this.getAttribute("media-id")}`);
+        const eventSource = new EventSource(`/api/metadata/${this.getAttribute("media-id")}`);
 
         eventSource.addEventListener("update", event => {
             const data = JSON.parse(event.data);
 
             if (data.art_url_hash !== this.art_url_hash) {
-                this.child_img.src = `/icon/${this.getAttribute("media-id")}/${data.art_url_hash}`;
+                this.child_img.src = `/api/icon/${this.getAttribute("media-id")}/${data.art_url_hash}`;
                 this.art_url_hash = data.art_url_hash;
             }
 
@@ -132,18 +132,26 @@ class MediaWidget extends HTMLElement {
     }
 }
 
-customElements.define("media-widget", MediaWidget);
+class WidgetList extends HTMLElement {
+    constructor() {
+        super();
+    }
 
-fetch("/list")
-    .then(res => res.json())
-    .then(data => {
-        const list = document.getElementById("list");
-        let export_widget = true;
-        for (let media of data) {
-            const media_widget = document.createElement("media-widget");
-            media_widget.setAttribute("media-id", media);
-            media_widget.setAttribute("export-widget", export_widget);
-            list.appendChild(media_widget);
-            export_widget = false;
-        }
-    });
+    connectedCallback() {
+        fetch("/api/list")
+            .then(res => res.json())
+            .then(data => {
+                let export_widget = true;
+                for (let media of data) {
+                    const media_widget = document.createElement("media-widget");
+                    media_widget.setAttribute("media-id", media);
+                    media_widget.setAttribute("export-widget", export_widget);
+                    this.appendChild(media_widget);
+                    export_widget = false;
+                }
+            });
+    }
+}
+
+customElements.define("media-widget", MediaWidget);
+customElements.define("widget-list", WidgetList);

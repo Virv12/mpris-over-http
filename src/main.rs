@@ -17,27 +17,34 @@ use axum::{
 use bytes::Bytes;
 use clap::Parser;
 use futures::StreamExt;
-use http::status::StatusCode;
+use http::{status::StatusCode, HeaderValue};
+use mime_guess::MimeGuess;
 use mpris::{DBusError, Player, PlayerFinder};
 use serde::Serialize;
-use tokio::{fs::File, sync::watch};
+use tokio::{fs::File, net::TcpListener, sync::watch};
 use tokio_stream::wrappers::{IntervalStream, WatchStream};
-use tower_http::services::ServeDir;
+use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer};
 
 mod error;
 
 use error::AppResult;
 
+const PUBLIC_DIR: &str = match std::option_env!("PUBLIC_DIR") {
+    Some(dir) => dir,
+    None => "dist",
+};
+
 fn find_player_by_id(id: &str) -> Result<Option<Player>, DBusError> {
     let player_finder = PlayerFinder::new()?;
-    Ok(player_finder
+    let player = player_finder
         .iter_players()?
         .find(|player| {
             !player
                 .as_ref()
                 .is_ok_and(|player| player.unique_name() != id)
         })
-        .transpose()?)
+        .transpose()?;
+    Ok(player)
 }
 
 #[tokio::main]
@@ -52,20 +59,26 @@ async fn main() {
 
     let args = Args::parse();
 
-    let app = Router::new()
-        .nest_service(
-            "/",
-            ServeDir::new("dist").append_index_html_on_directories(true),
-        )
+    let static_service = ServeDir::new(PUBLIC_DIR).append_index_html_on_directories(true);
+
+    let api_router = Router::new()
         .route("/list", get(list))
         .route("/metadata/:id", get(metadata))
         .route("/icon/:id/:hash", get(icon))
         .route("/playpause/:id", post(playpause))
         .route("/seek/:id/:dtime", post(seek))
         .route("/next/:id", post(next))
-        .route("/prev/:id", post(prev));
+        .route("/prev/:id", post(prev))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            http::header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ));
 
-    let listener = tokio::net::TcpListener::bind(args.listen_on).await.unwrap();
+    let app = Router::new()
+        .nest_service("/", static_service)
+        .nest("/api", api_router);
+
+    let listener = TcpListener::bind(args.listen_on).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -81,7 +94,7 @@ async fn list() -> AppResult<impl IntoResponse> {
 
 #[axum::debug_handler]
 async fn metadata(Path(id): Path<String>) -> Response<Body> {
-    #[derive(Debug, Clone, Serialize)]
+    #[derive(Debug, Default, Clone, Serialize)]
     struct Info {
         position: u64,
         length: Option<u64>,
@@ -100,7 +113,7 @@ async fn metadata(Path(id): Path<String>) -> Response<Body> {
     }
 
     fn update_watch(id: &str, tx: watch::Sender<Option<Info>>) -> anyhow::Result<()> {
-        let player = find_player_by_id(&id)?.context("Player not found")?;
+        let player = find_player_by_id(id)?.context("Player not found")?;
         for () in [()].into_iter().chain(player.events()?.map(|_| ())) {
             let metadata = player.get_metadata()?;
             let art_url = metadata.art_url();
@@ -131,7 +144,7 @@ async fn metadata(Path(id): Path<String>) -> Response<Body> {
         Ok(())
     }
 
-    let (tx, rx) = watch::channel(None);
+    let (tx, rx) = watch::channel(Default::default());
 
     std::thread::spawn(move || {
         let res = update_watch(&id, tx);
@@ -140,27 +153,26 @@ async fn metadata(Path(id): Path<String>) -> Response<Body> {
         }
     });
 
-    let event_stream = WatchStream::from_changes(rx)
-        .filter_map(|info| async { info })
-        .map(move |info| {
-            let mut json = b"event: update\ndata: ".to_vec();
-            serde_json::to_writer(&mut json, &info).unwrap();
-            json.extend_from_slice(b"\n\n");
-            json.into()
-        });
+    let event_stream = WatchStream::from_changes(rx).map(move |info| {
+        let mut json = b"event: update\ndata: ".to_vec();
+        serde_json::to_writer(&mut json, &info).unwrap();
+        json.extend_from_slice(b"\n\n");
+        Bytes::from(json)
+    });
 
     let ping_stream = IntervalStream::new(tokio::time::interval(Duration::from_secs(30)))
         .map(|_| Bytes::from_static(b"event: ping\ndata: \n\n"));
 
-    let stream = futures::stream::select(event_stream, ping_stream)
-        .chain(futures::stream::iter([Bytes::from_static(
+    let stream = futures::stream::select(
+        event_stream.chain(futures::stream::iter([Bytes::from_static(
             b"event: end\ndata: \n\n",
-        )]))
-        .map(|x| Ok::<_, Infallible>(x));
+        )])),
+        ping_stream,
+    )
+    .map(Ok::<_, Infallible>);
 
     Response::builder()
         .header("Content-Type", "text/event-stream")
-        .header("Cache-Control", "no-cache")
         .header("X-Accel-Buffering", "no")
         .body(Body::from_stream(stream))
         .unwrap()
@@ -182,9 +194,11 @@ async fn icon(Path((id, _hash)): Path<(String, u64)>) -> AppResult<Response<Body
     if let Some(path) = art_url.strip_prefix("file://") {
         let file = File::open(path).await?;
         let content_length = file.metadata().await?.len();
+        let mime = MimeGuess::from_path(path).first_or(mime::IMAGE_STAR);
         let body = Body::from_stream(tokio_util::io::ReaderStream::new(file));
         return Ok(Response::builder()
             .header("Content-Length", content_length)
+            .header("Content-Type", mime.as_ref())
             .body(body)
             .unwrap());
     }
@@ -203,6 +217,8 @@ async fn icon(Path((id, _hash)): Path<(String, u64)>) -> AppResult<Response<Body
         }
         return Ok(res);
     }
+
+    // TODO: data:image/jpeg;base64
 
     Err(anyhow!("Unsupported art URL: {}", art_url))?
 }

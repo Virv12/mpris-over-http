@@ -1,47 +1,14 @@
 <!DOCTYPE html>
 <html>
     <head>
+        <meta charset="UTF-8" />
         <title>MPRIS over HTTP</title>
-        <style>
-        :root { color-scheme: light dark; }
-
-        media-widget {
-            width: 100%;
-            position: relative;
-            display: block;
-        }
-
-        media-widget img {
-            width: 100%;
-            border-radius: 10px;
-            filter: brightness(0.8) blur(5px);
-        }
-
-        media-widget span {
-            position: absolute;
-            top: 7%;
-            left: 50%;
-            transform: translateX(-50%);
-            font-size: 1.5em;
-        }
-
-        media-widget progress {
-            position: absolute;
-            bottom: 7%;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 90%;
-        }
-
-        media-widget button.hidden {
-            display: none;
-        }
-        </style>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <script type="module" src="index.js" defer></script>
+        <link rel="stylesheet" href="style.css">
+        <script type="module" src="main.js"></script>
     </head>
     <body>
-        <div id="list"></div>
+        <center><h1>MPRIS over HTTP</h1></center>
+        <widget-list />
     </body>
 </html>
-
