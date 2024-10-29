@@ -1,4 +1,24 @@
 class MediaWidget extends HTMLElement {
+    child_img: HTMLImageElement;
+    art_url_hash: String | null;
+
+    child_title: HTMLElement;
+
+    child_prev: HTMLElement;
+    child_next: HTMLElement;
+
+    child_seek_backward: HTMLElement;
+    child_seek_forward: HTMLElement;
+
+    child_volume: HTMLElement;
+
+    child_progress: HTMLProgressElement;
+    update_progress: number | null;
+    progress_base: number;
+    playback_rate: number;
+
+    event_source: EventSource;
+
     constructor() {
         super();
     }
@@ -52,7 +72,7 @@ class MediaWidget extends HTMLElement {
         this.child_progress = document.createElement("progress");
         this.appendChild(this.child_progress);
 
-        this.eventSource = this.get_updates();
+        this.event_source = this.get_updates();
 
         this.addEventListener("click", () => {
             fetch(`/api/playpause/${this.getAttribute("media-id")}`, { method: "POST" });
@@ -60,8 +80,8 @@ class MediaWidget extends HTMLElement {
     }
 
     disconnectedCallback() {
-        this.eventSource.close();
-        cancelAnimationFrame(this.update_progress);
+        this.event_source.close();
+        if (this.update_progress !== null) cancelAnimationFrame(this.update_progress);
     }
 
     get_updates() {
@@ -118,7 +138,7 @@ class MediaWidget extends HTMLElement {
         });
 
         eventSource.addEventListener("end", () => {
-            this.parentNode.removeChild(this);
+            this.parentNode!.removeChild(this);
         });
 
         return eventSource;
@@ -145,7 +165,7 @@ class WidgetList extends HTMLElement {
                 for (let media of data) {
                     const media_widget = document.createElement("media-widget");
                     media_widget.setAttribute("media-id", media);
-                    media_widget.setAttribute("export-widget", export_widget);
+                    media_widget.setAttribute("export-widget", export_widget.toString());
                     this.appendChild(media_widget);
                     export_widget = false;
                 }
