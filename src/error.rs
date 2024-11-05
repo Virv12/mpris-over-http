@@ -1,4 +1,7 @@
-use axum::{body::Body, response::{IntoResponse, Response}};
+use axum::{
+    body::Body,
+    response::{IntoResponse, Response},
+};
 use http::StatusCode;
 
 pub struct AppError(anyhow::Error);

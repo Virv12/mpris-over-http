@@ -161,7 +161,7 @@ async fn metadata(Path(id): Path<String>) -> Response<Body> {
     });
 
     let ping_stream = IntervalStream::new(tokio::time::interval(Duration::from_secs(30)))
-        .map(|_| Bytes::from_static(b"event: ping\ndata: \n\n"));
+        .map(|_| Bytes::from_static(b":\n"));
 
     let stream = futures::stream::select(
         event_stream.chain(futures::stream::iter([Bytes::from_static(
